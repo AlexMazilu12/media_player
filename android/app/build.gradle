@@ -1,0 +1,55 @@
+plugins {
+    id("com.android.application") 
+    id("kotlin-android")
+    id("dev.flutter.flutter-gradle-plugin")
+}
+
+android {
+    namespace = "com.example.media_player"
+    compileSdk = flutter.compileSdkVersion
+    ndkVersion = flutter.ndkVersion
+
+    sourceSets {
+        main.kotlin.srcDirs += 'src/main/kotlin'
+        main.java.srcDirs = ['src/main/java']
+    }
+    
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = JavaVersion.VERSION_1_8
+    }
+
+    defaultConfig {
+        applicationId = "com.example.media_player"
+        minSdk = 21 // Explicitly set to 21 instead of flutter.minSdkVersion
+        targetSdk = flutter.targetSdkVersion
+        versionCode = flutter.versionCode
+        versionName = flutter.versionName
+    }
+
+    buildTypes {
+        release {
+            signingConfig = signingConfigs.debug
+        }
+    }
+}
+
+flutter {
+    source = "../.."
+}
+
+// Updated dependencies section to use hardcoded versions
+dependencies {
+    // Use a direct version specification instead of kotlin_version
+    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.0"
+    
+    // For media capabilities needed by audio_service
+    implementation 'androidx.media:media:1.6.0'
+    
+    // For backwards compatibility
+    implementation 'androidx.core:core:1.9.0'
+}
