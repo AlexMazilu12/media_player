@@ -2,24 +2,58 @@ import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:audio_service/audio_service.dart';
+import 'package:audio_session/audio_session.dart';
 
 late AudioPlayerHandler audioHandler;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
-  audioHandler = await AudioService.init(
-    builder: () => AudioPlayerHandler(),
-    config: AudioServiceConfig(
-      androidNotificationChannelId: 'com.example.media_player.audio',
-      androidNotificationChannelName: 'Audio playback',
-      androidNotificationOngoing: true,
-    ),
-  );
-  
+  try {
+    audioHandler = await AudioService.init(
+      builder: () => AudioPlayerHandler(),
+      config: AudioServiceConfig(
+        androidNotificationChannelId: 'com.example.media_player.audio',
+        androidNotificationChannelName: 'Audio Playback',
+        androidNotificationOngoing: true, 
+        androidStopForegroundOnPause: false,  // Change to false
+        androidNotificationChannelDescription: 'Media playback controls',
+        notificationColor: Colors.purple,
+      ),
+    );
+    
+    // Only set up the media session once, here
+    await audioHandler.setupMediaSession();
+    
+    // Initialize media item and playback state here
+    audioHandler.mediaItem.add(MediaItem(
+      id: 'none',
+      title: 'No Track Selected',
+      artist: 'Select a track to play',
+      album: 'Music Player',
+      playable: false,
+    ));
+    
+    audioHandler.playbackState.add(audioHandler.playbackState.value.copyWith(
+      controls: [
+        MediaControl.skipToPrevious,
+        MediaControl.play,
+        MediaControl.skipToNext,
+      ],
+      processingState: AudioProcessingState.idle,
+      playing: false,
+    ));
+  } catch (e) {
+    print("Error initializing audio service: $e");
+    // Initialize with a fallback handler if needed
+    audioHandler = AudioPlayerHandler();
+    
+    // Set up media session for fallback handler
+    await audioHandler.setupMediaSession();
+  }
+
   runApp(const AudioPlayerApp());
 }
-
 class AudioPlayerApp extends StatelessWidget {
   const AudioPlayerApp({super.key});
 
@@ -35,12 +69,30 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
   final _player = AudioPlayer();
   final _playlist = ConcatenatingAudioSource(children: []);
   
-  AudioPlayerHandler() {
-    _loadEmptyPlaylist();
-    _notifyAudioHandlerAboutPlaybackEvents();
-    _listenForDurationChanges();
-    _listenForCurrentSongIndexChanges();
-    _listenForSequenceStateChanges();
+AudioPlayerHandler() {
+  _loadEmptyPlaylist();
+  _notifyAudioHandlerAboutPlaybackEvents();
+  _listenForDurationChanges();
+  _listenForCurrentSongIndexChanges();
+  _listenForSequenceStateChanges();
+
+  playbackState.add(playbackState.value.copyWith(
+    controls: [
+      MediaControl.skipToPrevious,
+      MediaControl.play,
+      MediaControl.pause,
+      MediaControl.skipToNext,
+    ],
+    androidCompactActionIndices: const [0, 1, 3],
+    systemActions: {MediaAction.seek},
+    processingState: AudioProcessingState.idle,
+    playing: false,
+  ));
+}
+
+  Future<void> setupMediaSession() async {
+    final session = await AudioSession.instance;
+    await session.configure(AudioSessionConfiguration.music());
   }
 
   Future<void> _loadEmptyPlaylist() async {
@@ -51,33 +103,35 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
     }
   }
 
-  void _notifyAudioHandlerAboutPlaybackEvents() {
-    _player.playbackEventStream.listen((PlaybackEvent event) {
-      final playing = _player.playing;
-      playbackState.add(playbackState.value.copyWith(
-        controls: [
-          MediaControl.skipToPrevious,
-          if (playing) MediaControl.pause else MediaControl.play,
-          MediaControl.skipToNext,
-        ],
-        systemActions: const {
-          MediaAction.seek,
-        },
-        androidCompactActionIndices: const [0, 1, 2],
-        processingState: const {
-          ProcessingState.idle: AudioProcessingState.idle,
-          ProcessingState.loading: AudioProcessingState.loading,
-          ProcessingState.buffering: AudioProcessingState.buffering,
-          ProcessingState.ready: AudioProcessingState.ready,
-          ProcessingState.completed: AudioProcessingState.completed,
-        }[_player.processingState]!,
-        playing: playing,
-        updatePosition: _player.position,
-        bufferedPosition: _player.bufferedPosition,
-        speed: _player.speed,
-        queueIndex: event.currentIndex,
-      ));
-    });
+void _notifyAudioHandlerAboutPlaybackEvents() {
+  _player.playbackEventStream.listen((PlaybackEvent event) {
+    final playing = _player.playing;
+    
+    playbackState.add(playbackState.value.copyWith(
+      controls: [
+        MediaControl.skipToPrevious,
+        if (playing) MediaControl.pause else MediaControl.play,
+        MediaControl.skipToNext,
+      ],
+      androidCompactActionIndices: const [0, 1, 2],
+      processingState: {
+        ProcessingState.idle: AudioProcessingState.idle,
+        ProcessingState.loading: AudioProcessingState.loading,
+        ProcessingState.buffering: AudioProcessingState.buffering,
+        ProcessingState.ready: AudioProcessingState.ready,
+        ProcessingState.completed: AudioProcessingState.completed,
+      }[_player.processingState]!,
+      playing: playing,
+      updatePosition: _player.position,
+      bufferedPosition: _player.bufferedPosition,
+      speed: _player.speed,
+      queueIndex: event.currentIndex,
+    ));
+
+    if (_player.currentIndex != null && queue.value.isNotEmpty) {
+      mediaItem.add(queue.value[_player.currentIndex!]);
+    }
+  });
   }
 
   void _listenForDurationChanges() {
@@ -129,22 +183,78 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
   @override
   Future<void> stop() => _player.stop();
 
-  Future<void> setFilePath(String filePath, {String? title, String? artist}) async {
-    final mediaItem = MediaItem(
-      id: filePath,
-      title: title ?? 'Unknown Title',
-      artist: artist ?? 'Unknown Artist',
+Future<void> setFilePath(String filePath, {String? title, String? artist}) async {
+  final newMediaItem = MediaItem(
+    id: filePath,
+    title: title ?? 'Unknown Title',
+    artist: artist ?? 'Unknown Artist',
+    album: 'Music Player',
+    playable: true,
+    displayTitle: title ?? 'Unknown Title',
+    displaySubtitle: artist ?? 'Unknown Artist',
+    artUri: Uri.parse('asset:///assets/album_art.png'),
+    duration: await _getDuration(filePath),
+  );
+
+  // Update the current media item
+  mediaItem.add(newMediaItem);
+
+  await _playlist.clear();
+  await _playlist.add(
+    AudioSource.uri(
+      Uri.parse('file://$filePath'),
+      tag: newMediaItem,
+    ),
+  );
+
+  queue.add([newMediaItem]);
+  
+  // Make sure we update the playback state before playing
+  playbackState.add(playbackState.value.copyWith(
+    controls: [
+      MediaControl.skipToPrevious,
+      MediaControl.pause,
+      MediaControl.skipToNext,
+    ],
+    androidCompactActionIndices: const [0, 1, 2],
+    processingState: AudioProcessingState.ready,
+    playing: false,
+  ));
+
+  // Now play the media
+  play();
+}
+
+
+  Future<Duration?> _getDuration(String filePath) async {
+    try {
+      final tempPlayer = AudioPlayer();
+      final duration = await tempPlayer.setFilePath(filePath).then((_) => tempPlayer.duration);
+      await tempPlayer.dispose();
+      return duration;
+    } catch (e) {
+      print("Error getting duration: $e");
+      return null;
+    }
+  }
+
+  // Make sure you properly implement these override methods
+  @override
+  Future<void> addQueueItem(MediaItem mediaItem) async {
+    final audioSource = AudioSource.uri(
+      Uri.parse(mediaItem.id),
+      tag: mediaItem,
     );
-    
-    await _playlist.clear();
-    await _playlist.add(
-      AudioSource.uri(
-        Uri.parse('file://$filePath'),
-        tag: mediaItem,
-      ),
-    );
-    
-    play();
+    await _playlist.add(audioSource);
+    final newQueue = List<MediaItem>.from(queue.value)..add(mediaItem);
+    queue.add(newQueue);
+  }
+
+  @override
+  Future<void> removeQueueItemAt(int index) async {
+    await _playlist.removeAt(index);
+    final newQueue = List<MediaItem>.from(queue.value)..removeAt(index);
+    queue.add(newQueue);
   }
 }
 
@@ -170,7 +280,6 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
   }
 
   void _setupAudioHandlerListeners() {
-    // Use the global audioHandler instead of initializing a new one
     audioHandler.playbackState.listen((state) {
       setState(() {
         _isPlaying = state.playing;
