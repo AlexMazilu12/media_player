@@ -47,7 +47,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
     try {
       await _player.setAudioSource(_playlist);
     } catch (e) {
-      print("Error: $e");
+      print("Error occured: $e");
     }
   }
 
