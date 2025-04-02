@@ -5,6 +5,7 @@ import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:path/path.dart' as path;
 import 'dart:io';
+import 'dart:async';
 
 late AudioPlayerHandler audioHandler;
 
@@ -364,13 +365,35 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
   Duration _duration = Duration.zero;
   String _title = 'Melody Title';
   String _artist = 'Artist';
+  Timer? _positionTimer; // Add timer field
 
   @override
   void initState() {
     super.initState();
     _setupAudioHandlerListeners();
+    _startPositionTimer();
   }
 
+@override
+  void dispose() {
+    _positionTimer?.cancel();
+    super.dispose();
+  }
+
+  void _startPositionTimer() {
+    _positionTimer?.cancel();
+    
+    _positionTimer = Timer.periodic(Duration(milliseconds: 200), (timer) {
+      if (_isPlaying) {
+        final position = audioHandler._player.position;
+        if (position != _position) {
+          setState(() {
+            _position = position;
+          });
+        }
+      }
+    });
+  }
   void _setupAudioHandlerListeners() {
     audioHandler.playbackState.listen((state) {
       setState(() {
