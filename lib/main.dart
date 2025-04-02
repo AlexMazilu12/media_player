@@ -3,6 +3,8 @@ import 'package:file_picker/file_picker.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
+import 'package:path/path.dart' as path;
+import 'dart:io';
 
 late AudioPlayerHandler audioHandler;
 
@@ -169,6 +171,29 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
   @override
   Future<void> stop() => _player.stop();
 
+Future<Duration> _getDuration(String filePath) async {
+    try {
+      // Create a temporary player to get the duration
+      final tempPlayer = AudioPlayer();
+      await tempPlayer.setFilePath(filePath);
+      
+      // Wait for duration to be available
+      Duration? duration;
+      try {
+        duration = await tempPlayer.durationFuture;
+      } catch (e) {
+        // If durationFuture throws an error, try getting it directly
+        duration = tempPlayer.duration;
+      }
+      
+      await tempPlayer.dispose();
+      return duration ?? Duration.zero;
+    } catch (e) {
+      print('Error getting duration: $e');
+      return Duration.zero;
+    }
+  }
+  
   Future<void> setFilePath(String filePath, {String? title, String? artist}) async {
     try {
       playbackState.add(playbackState.value.copyWith(
@@ -178,15 +203,34 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
       
       final duration = await _getDuration(filePath);
       
+      // Extract metadata from the file
+      final metadata = await _extractMetadata(filePath);
+      
+      // If album art is available, save it to a temporary file
+      Uri? artUri;
+      if (metadata['albumArt'] != null) {
+        try {
+          final tempDir = Directory.systemTemp;
+          final tempFile = File('${tempDir.path}/album_art_${DateTime.now().millisecondsSinceEpoch}.jpg');
+          await tempFile.writeAsBytes(metadata['albumArt']);
+          artUri = Uri.file(tempFile.path);
+        } catch (e) {
+          print('Error saving album art: $e');
+          artUri = Uri.parse('asset:///assets/album_art.png');
+        }
+      } else {
+        artUri = Uri.parse('asset:///assets/album_art.png');
+      }
+      
       final newMediaItem = MediaItem(
         id: filePath,
-        title: title ?? 'Unknown Title',
-        artist: artist ?? 'Unknown Artist',
-        album: 'Music Player',
-        artUri: Uri.parse('asset:///assets/album_art.png'),
+        title: metadata['title'] ?? title ?? _getFileNameWithoutExtension(filePath),
+        artist: metadata['artist'] ?? artist ?? 'Unknown Artist',
+        album: metadata['album'] ?? 'Music Player',
+        artUri: artUri,
         playable: true,
-        displayTitle: title ?? 'Unknown Title',
-        displaySubtitle: artist ?? 'Unknown Artist',
+        displayTitle: metadata['title'] ?? title ?? _getFileNameWithoutExtension(filePath),
+        displaySubtitle: metadata['artist'] ?? artist ?? 'Unknown Artist',
         duration: duration,
       );
 
@@ -215,17 +259,75 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
       
       await Future.delayed(Duration(milliseconds: 200));
       await _player.play();
-    } catch (e) {}
+    } catch (e) {
+      print('Error setting file path: $e');
+    }
   }
 
-  Future<Duration?> _getDuration(String filePath) async {
+  String _getFileNameWithoutExtension(String filePath) {
+    final fileName = path.basename(filePath);
+    return path.basenameWithoutExtension(fileName);
+  }
+
+  Future<Map<String, dynamic>> _extractMetadata(String filePath) async {
     try {
+      // Create a temporary player to get basic metadata
       final tempPlayer = AudioPlayer();
-      final duration = await tempPlayer.setFilePath(filePath).then((_) => tempPlayer.duration);
+      await tempPlayer.setFilePath(filePath);
+      
+      // Try to parse the filename for additional info
+      final fileName = path.basename(filePath);
+      final fileNameWithoutExt = path.basenameWithoutExtension(filePath);
+      
+      // Set defaults using filename
+      String title = fileNameWithoutExt;
+      String artist = 'Unknown Artist';
+      
+      // Try to parse artist - title pattern from filename
+      if (fileNameWithoutExt.contains(' - ')) {
+        final parts = fileNameWithoutExt.split(' - ');
+        if (parts.length >= 2) {
+          artist = parts[0].trim();
+          title = parts.sublist(1).join(' - ').trim();
+        }
+      }
+      
+      // Use any available icyMetadata from the audio source
+      if (tempPlayer.icyMetadata?.info?.title != null) {
+        // ICY title often contains both artist and title in format "Artist - Title"
+        final icyTitle = tempPlayer.icyMetadata!.info!.title!;
+        
+        if (icyTitle.contains(' - ')) {
+          final parts = icyTitle.split(' - ');
+          if (parts.length >= 2) {
+            artist = parts[0].trim();
+            title = parts.sublist(1).join(' - ').trim();
+          } else {
+            title = icyTitle;
+          }
+        } else {
+          title = icyTitle;
+        }
+      }
+      
+      final result = {
+        'title': title,
+        'artist': artist,
+        'album': 'Music Player',
+        // We won't have album art this way
+      };
+      
       await tempPlayer.dispose();
-      return duration;
+      return result;
     } catch (e) {
-      return null;
+      print('Error extracting basic metadata: $e');
+      // Return filename-based metadata as fallback
+      final fileNameWithoutExt = path.basenameWithoutExtension(filePath);
+      return {
+        'title': fileNameWithoutExt,
+        'artist': 'Unknown Artist',
+        'album': 'Music Player',
+      };
     }
   }
 
