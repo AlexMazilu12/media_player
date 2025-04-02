@@ -4,7 +4,6 @@ import 'package:just_audio/just_audio.dart';
 import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:path/path.dart' as path;
-import 'dart:io';
 import 'dart:async';
 
 late AudioPlayerHandler audioHandler;
@@ -206,31 +205,13 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
       
       final duration = await _getDuration(filePath);
       
-      // Extract metadata from the file
       final metadata = await _extractMetadata(filePath);
-      
-      // If album art is available, save it to a temporary file
-      Uri? artUri;
-      if (metadata['albumArt'] != null) {
-        try {
-          final tempDir = Directory.systemTemp;
-          final tempFile = File('${tempDir.path}/album_art_${DateTime.now().millisecondsSinceEpoch}.jpg');
-          await tempFile.writeAsBytes(metadata['albumArt']);
-          artUri = Uri.file(tempFile.path);
-        } catch (e) {
-          print('Error saving album art: $e');
-          artUri = Uri.parse('asset:///assets/album_art.png');
-        }
-      } else {
-        artUri = Uri.parse('asset:///assets/album_art.png');
-      }
       
       final newMediaItem = MediaItem(
         id: filePath,
         title: metadata['title'] ?? title ?? _getFileNameWithoutExtension(filePath),
         artist: metadata['artist'] ?? artist ?? 'Unknown Artist',
         album: metadata['album'] ?? 'Music Player',
-        artUri: artUri,
         playable: true,
         displayTitle: metadata['title'] ?? title ?? _getFileNameWithoutExtension(filePath),
         displaySubtitle: metadata['artist'] ?? artist ?? 'Unknown Artist',
@@ -285,27 +266,11 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
         final duration = await _getDuration(filePath);
         final metadata = await _extractMetadata(filePath);
         
-        Uri? artUri;
-        if (metadata['albumArt'] != null) {
-          try {
-            final tempDir = Directory.systemTemp;
-            final tempFile = File('${tempDir.path}/album_art_${DateTime.now().millisecondsSinceEpoch}.jpg');
-            await tempFile.writeAsBytes(metadata['albumArt']);
-            artUri = Uri.file(tempFile.path);
-          } catch (e) {
-            print('Error saving album art: $e');
-            artUri = Uri.parse('asset:///assets/album_art.png');
-          }
-        } else {
-          artUri = Uri.parse('asset:///assets/album_art.png');
-        }
-        
         final newMediaItem = MediaItem(
           id: filePath,
           title: metadata['title'] ?? _getFileNameWithoutExtension(filePath),
           artist: metadata['artist'] ?? 'Unknown Artist',
           album: metadata['album'] ?? 'Music Player',
-          artUri: artUri,
           playable: true,
           displayTitle: metadata['title'] ?? _getFileNameWithoutExtension(filePath),
           displaySubtitle: metadata['artist'] ?? 'Unknown Artist',
@@ -479,14 +444,19 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
   }
 
   void _startPositionTimer() {
-    _positionTimer?.cancel();
-    
-    _positionTimer = Timer.periodic(Duration(milliseconds: 50), (timer) {
-      if (_isPlaying) {
-        final position = audioHandler._player.position;
-        if (position != _position) {
-          setState(() {
-            _position = position;
+  _positionTimer?.cancel();
+  
+  _positionTimer = Timer.periodic(Duration(milliseconds: 50), (timer) {
+    if (_isPlaying) {
+      var position = audioHandler._player.position;
+      
+      if (_duration > Duration.zero && position > _duration) {
+        position = _duration;
+      }
+      
+      if (position != _position) {
+        setState(() {
+          _position = position;
           });
         }
       }
@@ -645,7 +615,7 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
             ),
             child: Slider(
               value: _duration.inMilliseconds > 0 
-                ? _position.inMilliseconds / _duration.inMilliseconds
+                ? (_position.inMilliseconds / _duration.inMilliseconds).clamp(0.0, 1.0)
                 : 0.0,
               onChanged: (value) {
                 final newPosition = Duration(
@@ -775,10 +745,6 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
                       icon: Icon(Icons.playlist_play, color: Colors.white, size: 32),
                       onPressed: _togglePlaylistView,
                     ),
-                    IconButton(
-                      icon: Icon(Icons.add, color: Colors.white, size: 32),
-                      onPressed: _pickMultipleFiles,
-                    ),
                   ],
                 ),
               ),
@@ -799,8 +765,8 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
                       IconButton(
                         icon: Image.asset(
                           'assets/previous.png',
-                          width: 28,
-                          height: 28,
+                          width: 35,
+                          height: 35,
                           color: Colors.white,
                         ),
                         onPressed: _skipToPrevious,
@@ -829,8 +795,8 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
                       IconButton(
                         icon: Image.asset(
                           'assets/fast-forward.png',
-                          width: 28,
-                          height: 28,
+                          width: 35,
+                          height: 35,
                           color: Colors.white,
                         ),
                         onPressed: _skipToNext,
