@@ -107,7 +107,9 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
       
       playbackState.add(playbackState.value.copyWith(
         controls: [
+          MediaControl.skipToPrevious,
           if (playing) MediaControl.pause else MediaControl.play,
+          MediaControl.skipToNext,
         ],
         processingState: {
           ProcessingState.idle: AudioProcessingState.idle,
@@ -172,7 +174,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
   @override
   Future<void> stop() => _player.stop();
 
-Future<Duration> _getDuration(String filePath) async {
+  Future<Duration> _getDuration(String filePath) async {
     try {
       // Create a temporary player to get the duration
       final tempPlayer = AudioPlayer();
@@ -248,7 +250,11 @@ Future<Duration> _getDuration(String filePath) async {
       queue.add([newMediaItem]);
       
       playbackState.add(playbackState.value.copyWith(
-        controls: [MediaControl.pause],
+        controls: [
+          MediaControl.skipToPrevious,
+          MediaControl.pause,
+          MediaControl.skipToNext,
+        ],
         systemActions: const {
           MediaAction.seek,
           MediaAction.seekForward,
@@ -265,6 +271,102 @@ Future<Duration> _getDuration(String filePath) async {
     }
   }
 
+  Future<void> addMultipleFiles(List<String> filePaths) async {
+    try {
+      playbackState.add(playbackState.value.copyWith(
+        processingState: AudioProcessingState.loading,
+        playing: false,
+      ));
+      
+      await _playlist.clear();
+      final newQueue = <MediaItem>[];
+      
+      for (final filePath in filePaths) {
+        final duration = await _getDuration(filePath);
+        final metadata = await _extractMetadata(filePath);
+        
+        Uri? artUri;
+        if (metadata['albumArt'] != null) {
+          try {
+            final tempDir = Directory.systemTemp;
+            final tempFile = File('${tempDir.path}/album_art_${DateTime.now().millisecondsSinceEpoch}.jpg');
+            await tempFile.writeAsBytes(metadata['albumArt']);
+            artUri = Uri.file(tempFile.path);
+          } catch (e) {
+            print('Error saving album art: $e');
+            artUri = Uri.parse('asset:///assets/album_art.png');
+          }
+        } else {
+          artUri = Uri.parse('asset:///assets/album_art.png');
+        }
+        
+        final newMediaItem = MediaItem(
+          id: filePath,
+          title: metadata['title'] ?? _getFileNameWithoutExtension(filePath),
+          artist: metadata['artist'] ?? 'Unknown Artist',
+          album: metadata['album'] ?? 'Music Player',
+          artUri: artUri,
+          playable: true,
+          displayTitle: metadata['title'] ?? _getFileNameWithoutExtension(filePath),
+          displaySubtitle: metadata['artist'] ?? 'Unknown Artist',
+          duration: duration,
+        );
+        
+        newQueue.add(newMediaItem);
+        
+        await _playlist.add(
+          AudioSource.uri(
+            Uri.parse('file://$filePath'),
+            tag: newMediaItem,
+          ),
+        );
+      }
+      
+      queue.add(newQueue);
+      
+      if (newQueue.isNotEmpty) {
+        mediaItem.add(newQueue[0]);
+      }
+      
+      playbackState.add(playbackState.value.copyWith(
+        controls: [
+          MediaControl.skipToPrevious,
+          MediaControl.play,
+          MediaControl.skipToNext,
+        ],
+        systemActions: const {
+          MediaAction.seek,
+          MediaAction.seekForward,
+          MediaAction.seekBackward,
+        },
+        processingState: AudioProcessingState.ready,
+        playing: false,
+      ));
+    } catch (e) {
+      print('Error adding multiple files: $e');
+    }
+  }
+
+  @override
+  Future<void> skipToNext() async {
+    if (_player.hasNext) {
+      await _player.seekToNext();
+    }
+  }
+  
+  @override
+  Future<void> skipToPrevious() async {
+    if (_player.hasPrevious) {
+      await _player.seekToPrevious();
+    }
+  }
+
+  @override
+  Future<void> skipToQueueItem(int index) async {
+    if (index < 0 || index >= _playlist.length) return;
+    await _player.seek(Duration.zero, index: index);
+  }
+
   String _getFileNameWithoutExtension(String filePath) {
     final fileName = path.basename(filePath);
     return path.basenameWithoutExtension(fileName);
@@ -272,19 +374,15 @@ Future<Duration> _getDuration(String filePath) async {
 
   Future<Map<String, dynamic>> _extractMetadata(String filePath) async {
     try {
-      // Create a temporary player to get basic metadata
       final tempPlayer = AudioPlayer();
       await tempPlayer.setFilePath(filePath);
       
-      // Try to parse the filename for additional info
       final fileName = path.basename(filePath);
       final fileNameWithoutExt = path.basenameWithoutExtension(filePath);
       
-      // Set defaults using filename
       String title = fileNameWithoutExt;
       String artist = 'Unknown Artist';
       
-      // Try to parse artist - title pattern from filename
       if (fileNameWithoutExt.contains(' - ')) {
         final parts = fileNameWithoutExt.split(' - ');
         if (parts.length >= 2) {
@@ -293,9 +391,7 @@ Future<Duration> _getDuration(String filePath) async {
         }
       }
       
-      // Use any available icyMetadata from the audio source
       if (tempPlayer.icyMetadata?.info?.title != null) {
-        // ICY title often contains both artist and title in format "Artist - Title"
         final icyTitle = tempPlayer.icyMetadata!.info!.title!;
         
         if (icyTitle.contains(' - ')) {
@@ -315,14 +411,12 @@ Future<Duration> _getDuration(String filePath) async {
         'title': title,
         'artist': artist,
         'album': 'Music Player',
-        // We won't have album art this way
       };
       
       await tempPlayer.dispose();
       return result;
     } catch (e) {
       print('Error extracting basic metadata: $e');
-      // Return filename-based metadata as fallback
       final fileNameWithoutExt = path.basenameWithoutExtension(filePath);
       return {
         'title': fileNameWithoutExt,
@@ -365,7 +459,11 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
   Duration _duration = Duration.zero;
   String _title = 'Melody Title';
   String _artist = 'Artist';
-  Timer? _positionTimer; // Add timer field
+  Timer? _positionTimer;
+  List<MediaItem> _playlist = [];
+  bool _showPlaylist = false;
+
+  AudioPlayer get _player => audioHandler._player;
 
   @override
   void initState() {
@@ -374,7 +472,7 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
     _startPositionTimer();
   }
 
-@override
+  @override
   void dispose() {
     _positionTimer?.cancel();
     super.dispose();
@@ -383,7 +481,7 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
   void _startPositionTimer() {
     _positionTimer?.cancel();
     
-    _positionTimer = Timer.periodic(Duration(milliseconds: 200), (timer) {
+    _positionTimer = Timer.periodic(Duration(milliseconds: 50), (timer) {
       if (_isPlaying) {
         final position = audioHandler._player.position;
         if (position != _position) {
@@ -394,6 +492,7 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
       }
     });
   }
+
   void _setupAudioHandlerListeners() {
     audioHandler.playbackState.listen((state) {
       setState(() {
@@ -411,6 +510,12 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
         });
       }
     });
+    
+    audioHandler.queue.listen((items) {
+      setState(() {
+        _playlist = items;
+      });
+    });
   }
 
   Future<void> _pickFile() async {
@@ -424,12 +529,224 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
     }
   }
 
+  Future<void> _pickMultipleFiles() async {
+    FilePickerResult? result = await FilePicker.platform.pickFiles(
+      type: FileType.audio,
+      allowMultiple: true,
+    );
+
+    if (result != null && result.files.isNotEmpty) {
+      List<String> filePaths = result.files
+          .where((file) => file.path != null)
+          .map((file) => file.path!)
+          .toList();
+          
+      if (filePaths.isNotEmpty) {
+        await audioHandler.addMultipleFiles(filePaths);
+      }
+    }
+  }
+
   Future<void> _togglePlayPause() async {
     if (_isPlaying) {
       await audioHandler.pause();
     } else {
       await audioHandler.play();
     }
+  }
+  
+  void _skipToNext() async {
+    await audioHandler.skipToNext();
+  }
+  
+  void _skipToPrevious() async {
+    await audioHandler.skipToPrevious();
+  }
+  
+  void _togglePlaylistView() {
+    setState(() {
+      _showPlaylist = !_showPlaylist;
+    });
+  }
+  
+  void _playTrack(int index) async {
+    await audioHandler.skipToQueueItem(index);
+    await audioHandler.play();
+  }
+
+  String _formatDuration(Duration duration) {
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
+    final minutes = twoDigits(duration.inMinutes.remainder(60));
+    final seconds = twoDigits(duration.inSeconds.remainder(60));
+    return '$minutes:$seconds';
+  }
+
+  Widget _buildPlayerView() {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Container(
+          width: 310,
+          height: 310,
+          decoration: BoxDecoration(
+            color: Color(0xFF743AC0),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Center(
+            child: _playlist.isEmpty 
+                ? IconButton(
+                    icon: Image.asset('assets/upload.png', width: 60, height: 60, color: Colors.white),
+                    onPressed: _pickMultipleFiles,
+                  )
+                : Icon(Icons.music_note, size: 100, color: Colors.white.withOpacity(0.7)),
+          ),
+        ),
+        SizedBox(height: 20),
+        Text(
+          _title,
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 24,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        Text(
+          _artist,
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 16,
+          ),
+        ),
+        SizedBox(height: 40),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 40),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                _formatDuration(_position),
+                style: TextStyle(color: Colors.white),
+              ),
+              Text(
+                _formatDuration(_duration),
+                style: TextStyle(color: Colors.white),
+              ),
+            ],
+          ),
+        ),
+        SizedBox(height: 8),
+        SizedBox(
+          width: 300,
+          child: SliderTheme(
+            data: SliderThemeData(
+              trackHeight: 4,
+              thumbShape: RoundSliderThumbShape(enabledThumbRadius: 8),
+              overlayShape: RoundSliderOverlayShape(overlayRadius: 16),
+            ),
+            child: Slider(
+              value: _duration.inMilliseconds > 0 
+                ? _position.inMilliseconds / _duration.inMilliseconds
+                : 0.0,
+              onChanged: (value) {
+                final newPosition = Duration(
+                  milliseconds: (value * _duration.inMilliseconds).round(),
+                );
+                audioHandler.seek(newPosition);
+              },
+              activeColor: Colors.white,
+              inactiveColor: Colors.white24,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+  
+  Widget _buildPlaylistView() {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Text(
+            'Playlist (${_playlist.length} songs)',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+        Expanded(
+          child: _playlist.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.playlist_add, color: Colors.white.withOpacity(0.7), size: 80),
+                      SizedBox(height: 16),
+                      Text(
+                        'Your playlist is empty',
+                        style: TextStyle(color: Colors.white, fontSize: 16),
+                      ),
+                      SizedBox(height: 20),
+                      ElevatedButton.icon(
+                        icon: Icon(Icons.add),
+                        label: Text('Add Songs'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Color(0xFF743AC0),
+                          foregroundColor: Colors.white,
+                          padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                        ),
+                        onPressed: _pickMultipleFiles,
+                      ),
+                    ],
+                  ),
+                )
+              : ListView.builder(
+                  itemCount: _playlist.length,
+                  itemBuilder: (context, index) {
+                    final item = _playlist[index];
+                    final isCurrentTrack = index == _player.currentIndex;
+                    
+                    return ListTile(
+                      leading: Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: isCurrentTrack ? Color(0xFF743AC0) : Colors.white.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Center(
+                          child: Icon(
+                            isCurrentTrack && _isPlaying ? Icons.pause : Icons.music_note,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                      title: Text(
+                        item.title,
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: isCurrentTrack ? FontWeight.bold : FontWeight.normal,
+                        ),
+                      ),
+                      subtitle: Text(
+                        item.artist ?? 'Unknown Artist',
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.7),
+                        ),
+                      ),
+                      trailing: Text(
+                        _formatDuration(item.duration ?? Duration.zero),
+                        style: TextStyle(color: Colors.white.withOpacity(0.7)),
+                      ),
+                      onTap: () => _playTrack(index),
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
   }
 
   @override
@@ -449,60 +766,46 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
         child: SafeArea(
           child: Column(
             children: [
-              Expanded(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Container(
-                      width: 310,
-                      height: 310,
-                      decoration: BoxDecoration(
-                        color: Color(0xFF743AC0),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Center(
-                        child: IconButton(
-                          icon: Image.asset('assets/upload.png', width: 60, height: 60, color: Colors.white),
-                          onPressed: _pickFile,
-                        ),
-                      ),
+                    IconButton(
+                      icon: Icon(Icons.playlist_play, color: Colors.white, size: 32),
+                      onPressed: _togglePlaylistView,
                     ),
-                    SizedBox(height: 20),
-                    Text(
-                      _title,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                      ),
+                    IconButton(
+                      icon: Icon(Icons.add, color: Colors.white, size: 32),
+                      onPressed: _pickMultipleFiles,
                     ),
-                    Text(
-                      _artist,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                      ),
-                    ),
-                    SizedBox(height: 40),
-                    SizedBox(
-                      width: 300,
-                      child: LinearProgressIndicator(
-                        value: _duration.inMilliseconds > 0 
-                          ? _position.inMilliseconds / _duration.inMilliseconds
-                          : 0.0,
-                        backgroundColor: Colors.white24,
-                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                      ),
-                    )
                   ],
                 ),
               ),
+
+              Expanded(
+                child: _showPlaylist
+                    ? _buildPlaylistView()
+                    : _buildPlayerView(),
+              ),
+              
+
               Container(
                 child: Transform.translate(
                   offset: Offset(0, -80),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
+                      IconButton(
+                        icon: Image.asset(
+                          'assets/previous.png',
+                          width: 28,
+                          height: 28,
+                          color: Colors.white,
+                        ),
+                        onPressed: _skipToPrevious,
+                      ),
+                      SizedBox(width: 40),
                       Container(
                         width: 65,
                         height: 65,
@@ -521,6 +824,16 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
                           ),
                           onPressed: _togglePlayPause,
                         ),
+                      ),
+                      SizedBox(width: 40),
+                      IconButton(
+                        icon: Image.asset(
+                          'assets/fast-forward.png',
+                          width: 28,
+                          height: 28,
+                          color: Colors.white,
+                        ),
+                        onPressed: _skipToNext,
                       ),
                     ],
                   ),
