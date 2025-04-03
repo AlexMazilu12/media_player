@@ -175,16 +175,13 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
 
   Future<Duration> _getDuration(String filePath) async {
     try {
-      // Create a temporary player to get the duration
       final tempPlayer = AudioPlayer();
       await tempPlayer.setFilePath(filePath);
       
-      // Wait for duration to be available
       Duration? duration;
       try {
         duration = await tempPlayer.durationFuture;
       } catch (e) {
-        // If durationFuture throws an error, try getting it directly
         duration = tempPlayer.duration;
       }
       
@@ -252,15 +249,15 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
     }
   }
 
-  Future<void> addMultipleFiles(List<String> filePaths) async {
+    Future<void> addMultipleFiles(List<String> filePaths) async {
     try {
       playbackState.add(playbackState.value.copyWith(
         processingState: AudioProcessingState.loading,
         playing: false,
       ));
       
-      await _playlist.clear();
-      final newQueue = <MediaItem>[];
+      final currentQueue = List<MediaItem>.from(queue.value);
+      final newQueue = List<MediaItem>.from(currentQueue);
       
       for (final filePath in filePaths) {
         final duration = await _getDuration(filePath);
@@ -289,7 +286,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
       
       queue.add(newQueue);
       
-      if (newQueue.isNotEmpty) {
+      if (newQueue.isNotEmpty && currentQueue.isEmpty) {
         mediaItem.add(newQueue[0]);
       }
       
@@ -427,6 +424,7 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
   Timer? _positionTimer;
   List<MediaItem> _playlist = [];
   bool _showPlaylist = false;
+  Orientation _currentOrientation = Orientation.portrait;
 
   AudioPlayer get _player => audioHandler._player;
 
@@ -444,19 +442,19 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
   }
 
   void _startPositionTimer() {
-  _positionTimer?.cancel();
-  
-  _positionTimer = Timer.periodic(Duration(milliseconds: 50), (timer) {
-    if (_isPlaying) {
-      var position = audioHandler._player.position;
-      
-      if (_duration > Duration.zero && position > _duration) {
-        position = _duration;
-      }
-      
-      if (position != _position) {
-        setState(() {
-          _position = position;
+    _positionTimer?.cancel();
+    
+    _positionTimer = Timer.periodic(Duration(milliseconds: 50), (timer) {
+      if (_isPlaying) {
+        var position = audioHandler._player.position;
+        
+        if (_duration > Duration.zero && position > _duration) {
+          position = _duration;
+        }
+        
+        if (position != _position) {
+          setState(() {
+            _position = position;
           });
         }
       }
@@ -551,27 +549,29 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
     return '$minutes:$seconds';
   }
 
-  Widget _buildPlayerView() {
+  Widget _buildAlbumArt() {
+    return Container(
+      width: 250,
+      height: 250,
+      decoration: BoxDecoration(
+        color: Color(0xFF743AC0),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Center(
+        child: _playlist.isEmpty 
+            ? IconButton(
+                icon: Image.asset('assets/upload.png', width: 60, height: 60, color: Colors.white),
+                onPressed: _pickMultipleFiles,
+              )
+            : Icon(Icons.music_note, size: 100, color: Colors.white.withOpacity(0.7)),
+      ),
+    );
+  }
+
+  Widget _buildPlayerControls() {
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Container(
-          width: 310,
-          height: 310,
-          decoration: BoxDecoration(
-            color: Color(0xFF743AC0),
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Center(
-            child: _playlist.isEmpty 
-                ? IconButton(
-                    icon: Image.asset('assets/upload.png', width: 60, height: 60, color: Colors.white),
-                    onPressed: _pickMultipleFiles,
-                  )
-                : Icon(Icons.music_note, size: 100, color: Colors.white.withOpacity(0.7)),
-          ),
-        ),
-        SizedBox(height: 20),
         Text(
           _title,
           style: TextStyle(
@@ -579,6 +579,7 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
             fontSize: 24,
             fontWeight: FontWeight.bold,
           ),
+          textAlign: TextAlign.center,
         ),
         Text(
           _artist,
@@ -587,9 +588,9 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
             fontSize: 16,
           ),
         ),
-        SizedBox(height: 40),
+        SizedBox(height: 20),
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 40),
+          padding: const EdgeInsets.symmetric(horizontal: 20),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -605,45 +606,92 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
           ),
         ),
         SizedBox(height: 8),
-        SizedBox(
-          width: 300,
-          child: SliderTheme(
-            data: SliderThemeData(
-              trackHeight: 4,
-              thumbShape: RoundSliderThumbShape(enabledThumbRadius: 8),
-              overlayShape: RoundSliderOverlayShape(overlayRadius: 16),
-            ),
-            child: Slider(
-              value: _duration.inMilliseconds > 0 
-                ? (_position.inMilliseconds / _duration.inMilliseconds).clamp(0.0, 1.0)
-                : 0.0,
-              onChanged: (value) {
-                final newPosition = Duration(
-                  milliseconds: (value * _duration.inMilliseconds).round(),
-                );
-                audioHandler.seek(newPosition);
-              },
-              activeColor: Colors.white,
-              inactiveColor: Colors.white24,
-            ),
+        SliderTheme(
+          data: SliderThemeData(
+            trackHeight: 4,
+            thumbShape: RoundSliderThumbShape(enabledThumbRadius: 8),
+            overlayShape: RoundSliderOverlayShape(overlayRadius: 16),
           ),
+          child: Slider(
+            value: _duration.inMilliseconds > 0 
+              ? (_position.inMilliseconds / _duration.inMilliseconds).clamp(0.0, 1.0)
+              : 0.0,
+            onChanged: (value) {
+              final newPosition = Duration(
+                milliseconds: (value * _duration.inMilliseconds).round(),
+              );
+              audioHandler.seek(newPosition);
+            },
+            activeColor: Colors.white,
+            inactiveColor: Colors.white24,
+          ),
+        ),
+        SizedBox(height: 20),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            IconButton(
+              icon: Image.asset(
+                'assets/previous.png',
+                width: 35,
+                height: 35,
+                color: Colors.white,
+              ),
+              onPressed: _skipToPrevious,
+            ),
+            SizedBox(width: 20),
+            Container(
+              width: 65,
+              height: 65,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+              ),
+              child: IconButton(
+                icon: Center(
+                  child: Image.asset(
+                    _isPlaying ? 'assets/pause.png' : 'assets/play-button-arrowhead.png',
+                    width: 30,
+                    height: 30,
+                    color: Colors.black,
+                  ),
+                ),
+                onPressed: _togglePlayPause,
+              ),
+            ),
+            SizedBox(width: 20),
+            IconButton(
+              icon: Image.asset(
+                'assets/fast-forward.png',
+                width: 35,
+                height: 35,
+                color: Colors.white,
+              ),
+              onPressed: _skipToNext,
+            ),
+          ],
         ),
       ],
     );
   }
-  
-  Widget _buildPlaylistView() {
+
+  Widget _buildPlaylistView({bool showAddButton = true}) {
     return Column(
       children: [
         Padding(
           padding: const EdgeInsets.all(16.0),
-          child: Text(
-            'Playlist (${_playlist.length} songs)',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-            ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Playlist (${_playlist.length} songs)',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
           ),
         ),
         Expanded(
@@ -657,17 +705,6 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
                       Text(
                         'Your playlist is empty',
                         style: TextStyle(color: Colors.white, fontSize: 16),
-                      ),
-                      SizedBox(height: 20),
-                      ElevatedButton.icon(
-                        icon: Icon(Icons.add),
-                        label: Text('Add Songs'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Color(0xFF743AC0),
-                          foregroundColor: Colors.white,
-                          padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                        ),
-                        onPressed: _pickMultipleFiles,
                       ),
                     ],
                   ),
@@ -715,100 +752,164 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
                   },
                 ),
         ),
+        if (showAddButton)
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: ElevatedButton.icon(
+              icon: Icon(Icons.add, color: Colors.white),
+              label: Text('Add Songs'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Color(0xFF743AC0),
+                foregroundColor: Colors.white,
+                padding: EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                minimumSize: Size(double.infinity, 50),
+              ),
+              onPressed: _pickMultipleFiles,
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildPortraitView() {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16.0),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              IconButton(
+                icon: Icon(Icons.playlist_play, color: Colors.white, size: 32),
+                onPressed: _togglePlaylistView,
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: _showPlaylist
+              ? _buildPlaylistView()
+              : Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    _buildAlbumArt(),
+                    SizedBox(height: 20),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: _buildPlayerControls(),
+                    ),
+                  ],
+                ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLandscapeView() {
+    return Row(
+      children: [
+        Container(
+          width: MediaQuery.of(context).size.width * 0.4,
+          child: Column(
+            children: [
+              Expanded(
+                child: _buildPlaylistView(showAddButton: false),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: ElevatedButton.icon(
+                  icon: Icon(Icons.add, color: Colors.white),
+                  label: Text('Add Songs'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Color(0xFF743AC0),
+                    foregroundColor: Colors.white,
+                    padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                    minimumSize: Size(double.infinity, 50),
+                  ),
+                  onPressed: _pickMultipleFiles,
+                ),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: Center(
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                IconButton(
+                  iconSize: 80,
+                  icon: Image.asset(
+                    'assets/previous.png',
+                    width: 80,
+                    height: 80,
+                    color: Colors.white,
+                  ),
+                  onPressed: _skipToPrevious,
+                ),
+                Container(
+                  width: 120,
+                  height: 120,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                  ),
+                  child: IconButton(
+                    iconSize: 70,
+                    icon: Center(
+                      child: Image.asset(
+                        _isPlaying ? 'assets/pause.png' : 'assets/play-button-arrowhead.png',
+                        width: 70,
+                        height: 70,
+                        color: Colors.black,
+                      ),
+                    ),
+                    onPressed: _togglePlayPause,
+                  ),
+                ),
+                IconButton(
+                  iconSize: 80,
+                  icon: Image.asset(
+                    'assets/fast-forward.png',
+                    width: 80,
+                    height: 80,
+                    color: Colors.white,
+                  ),
+                  onPressed: _skipToNext,
+                ),
+              ],
+            ),
+          ),
+        ),
       ],
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              Color(0xFF53027C),
-              Color(0xFF021250),
-            ],
+    return OrientationBuilder(
+      builder: (context, orientation) {
+        _currentOrientation = orientation;
+        return Scaffold(
+          body: Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Color(0xFF53027C),
+                  Color(0xFF021250),
+                ],
+              ),
+            ),
+            child: SafeArea(
+              child: orientation == Orientation.portrait
+                  ? _buildPortraitView()
+                  : _buildLandscapeView(),
+            ),
           ),
-        ),
-        child: SafeArea(
-          child: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    IconButton(
-                      icon: Icon(Icons.playlist_play, color: Colors.white, size: 32),
-                      onPressed: _togglePlaylistView,
-                    ),
-                  ],
-                ),
-              ),
-
-              Expanded(
-                child: _showPlaylist
-                    ? _buildPlaylistView()
-                    : _buildPlayerView(),
-              ),
-              
-
-              Container(
-                child: Transform.translate(
-                  offset: Offset(0, -80),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      IconButton(
-                        icon: Image.asset(
-                          'assets/previous.png',
-                          width: 35,
-                          height: 35,
-                          color: Colors.white,
-                        ),
-                        onPressed: _skipToPrevious,
-                      ),
-                      SizedBox(width: 40),
-                      Container(
-                        width: 65,
-                        height: 65,
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          shape: BoxShape.circle,
-                        ),
-                        child: IconButton(
-                          icon: Center(
-                            child: Image.asset(
-                              _isPlaying ? 'assets/pause.png' : 'assets/play-button-arrowhead.png',
-                              width: 30,
-                              height: 30,
-                              color: Colors.black,
-                            ),
-                          ),
-                          onPressed: _togglePlayPause,
-                        ),
-                      ),
-                      SizedBox(width: 40),
-                      IconButton(
-                        icon: Image.asset(
-                          'assets/fast-forward.png',
-                          width: 35,
-                          height: 35,
-                          color: Colors.white,
-                        ),
-                        onPressed: _skipToNext,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
