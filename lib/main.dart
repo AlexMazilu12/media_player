@@ -588,7 +588,7 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
             fontSize: 16,
           ),
         ),
-        SizedBox(height: 20),
+        SizedBox(height: 30),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20),
           child: Row(
@@ -626,45 +626,47 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
             inactiveColor: Colors.white24,
           ),
         ),
-        SizedBox(height: 20),
+        SizedBox(height: 50),
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             IconButton(
               icon: Image.asset(
                 'assets/previous.png',
-                width: 35,
-                height: 35,
+                width: 60,
+                height: 60,
                 color: Colors.white,
               ),
               onPressed: _skipToPrevious,
             ),
-            SizedBox(width: 20),
+            SizedBox(width: 40),
             Container(
-              width: 65,
-              height: 65,
+              width: 80,
+              height: 80,
               decoration: BoxDecoration(
                 color: Colors.white,
                 shape: BoxShape.circle,
               ),
               child: IconButton(
+                padding: EdgeInsets.zero,
+                iconSize: 85,
                 icon: Center(
                   child: Image.asset(
                     _isPlaying ? 'assets/pause.png' : 'assets/play-button-arrowhead.png',
-                    width: 30,
-                    height: 30,
+                    width: 45,
+                    height: 45,
                     color: Colors.black,
                   ),
                 ),
                 onPressed: _togglePlayPause,
               ),
             ),
-            SizedBox(width: 20),
+            SizedBox(width: 40),
             IconButton(
               icon: Image.asset(
                 'assets/fast-forward.png',
-                width: 35,
-                height: 35,
+                width: 60,
+                height: 60,
                 color: Colors.white,
               ),
               onPressed: _skipToNext,
